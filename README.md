@@ -256,6 +256,8 @@ CREATE POLICY "Enable update access for authenticated users" ON public.support F
 -- FEEDBACK Table Policies
 CREATE POLICY "Enable insert for authenticated users" ON public.feedback FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Enable read access for authenticated users" ON public.feedback FOR SELECT TO authenticated USING (true);
+```
+</details>
 
 ---
 
