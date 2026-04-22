@@ -119,7 +119,147 @@ Follow these steps to set up and run the project locally.
 
 ---
 
-### 1. Clone the Repository
+### 1. Database Setup
+
+Before running the application, configure your Supabase database. Run the following SQL queries in your Supabase SQL Editor to create the tables, establish relationships, and apply Row Level Security (RLS) policies.
+
+<details>
+<summary><b>Click to expand SQL Schema & Policies</b></summary>
+
+```sql
+-- ==========================================
+-- 1. TABLE CREATION
+-- ==========================================
+
+CREATE TABLE public.users (
+  id uuid NOT NULL,
+  first_name text,
+  last_name text,
+  email text,
+  phone_number text,
+  role text DEFAULT 'Applicant'::text CHECK (role = ANY (ARRAY['Applicant'::text, 'Admin'::text, 'Officer'::text])),
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  deletion_requested boolean DEFAULT false,
+  CONSTRAINT users_pkey PRIMARY KEY (id),
+  CONSTRAINT users_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.loans (
+  application_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  first_name text,
+  last_name text,
+  email text,
+  phone_number text,
+  date_of_birth date,
+  pan_number text,
+  loan_amount numeric,
+  loan_tenure integer,
+  loan_purpose text,
+  monthly_income numeric,
+  credit_score integer,
+  loan_status text DEFAULT 'Pending'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  document_urls jsonb DEFAULT '{}'::jsonb,
+  officer_comments jsonb DEFAULT '[]'::jsonb,
+  officer_decision text,
+  review_count integer DEFAULT 0,
+  sanctioned_amount numeric,
+  interest_rate numeric,
+  CONSTRAINT loans_pkey PRIMARY KEY (application_id),
+  CONSTRAINT loans_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.xai_data (
+  explanation_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  application_id uuid NOT NULL,
+  shap_values jsonb,
+  top_contributing_factor text,
+  explanation_output text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  ocr_json jsonb,
+  status text DEFAULT 'pending'::text,
+  model_json jsonb,
+  lime_values jsonb DEFAULT '[]'::jsonb,
+  counterfactuals jsonb DEFAULT '[]'::jsonb,
+  CONSTRAINT xai_data_pkey PRIMARY KEY (explanation_id),
+  CONSTRAINT xai_data_application_id_fkey FOREIGN KEY (application_id) REFERENCES public.loans(application_id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.support (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone DEFAULT now(),
+  user_id uuid,
+  full_name text NOT NULL,
+  email text NOT NULL,
+  phone text,
+  application_id uuid,
+  subject text NOT NULL,
+  message text NOT NULL,
+  evidence_path text,
+  status text DEFAULT 'Open'::text,
+  CONSTRAINT support_pkey PRIMARY KEY (id),
+  CONSTRAINT support_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_support_application FOREIGN KEY (application_id) REFERENCES public.loans(application_id) ON DELETE CASCADE
+);
+
+CREATE TABLE public.feedback (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone DEFAULT now(),
+  user_id uuid,
+  application_id uuid UNIQUE,
+  is_helpful boolean NOT NULL,
+  CONSTRAINT feedback_pkey PRIMARY KEY (id),
+  CONSTRAINT feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  CONSTRAINT feedback_application_id_fkey FOREIGN KEY (application_id) REFERENCES public.loans(application_id) ON DELETE CASCADE
+);
+
+-- ==========================================
+-- 2. ENABLE ROW LEVEL SECURITY
+-- ==========================================
+
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.xai_data ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.support ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
+
+-- ==========================================
+-- 3. RLS POLICIES
+-- ==========================================
+
+-- USERS Table Policies
+CREATE POLICY "Admins can delete users" ON public.users FOR DELETE TO public USING ((SELECT role FROM public.users WHERE id = auth.uid()) = 'Admin');
+CREATE POLICY "Admins can insert users" ON public.users FOR INSERT TO public WITH CHECK ((SELECT role FROM public.users WHERE id = auth.uid()) = 'Admin');
+CREATE POLICY "Allow authenticated read users" ON public.users FOR SELECT TO public USING (auth.role() = 'authenticated');
+CREATE POLICY "Users can update their own profile" ON public.users FOR UPDATE TO public USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users can view own profile" ON public.users FOR SELECT TO public USING (auth.uid() = id);
+
+-- LOANS Table Policies
+CREATE POLICY "Admins can view all loans" ON public.loans FOR SELECT TO public USING ((SELECT role FROM public.users WHERE id = auth.uid()) = 'Admin');
+CREATE POLICY "Officers can update loans" ON public.loans FOR UPDATE TO public USING ((SELECT role FROM public.users WHERE id = auth.uid()) = 'Officer');
+CREATE POLICY "Officers can view all loans" ON public.loans FOR SELECT TO public USING ((SELECT role FROM public.users WHERE id = auth.uid()) = 'Officer');
+CREATE POLICY "Users can insert loans" ON public.loans FOR INSERT TO public WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can view own loans" ON public.loans FOR SELECT TO public USING (auth.uid() = user_id);
+CREATE POLICY "Users can view their own loans" ON public.loans FOR ALL TO public USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- XAI_DATA Table Policies
+CREATE POLICY "Officers can view xai_data" ON public.xai_data FOR SELECT TO public USING ((SELECT role FROM public.users WHERE id = auth.uid()) = 'Officer');
+CREATE POLICY "Users can view own explanations" ON public.xai_data FOR SELECT TO public USING (application_id IN (SELECT application_id FROM public.loans WHERE user_id = auth.uid()));
+CREATE POLICY "Users can view their own xai_data" ON public.xai_data FOR ALL TO public USING (application_id IN (SELECT application_id FROM public.loans WHERE user_id = auth.uid())) WITH CHECK (application_id IN (SELECT application_id FROM public.loans WHERE user_id = auth.uid()));
+
+-- SUPPORT Table Policies
+CREATE POLICY "Enable insert for authenticated users" ON public.support FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Enable read access for authenticated users" ON public.support FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Enable update access for authenticated users" ON public.support FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+
+-- FEEDBACK Table Policies
+CREATE POLICY "Enable insert for authenticated users" ON public.feedback FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Enable read access for authenticated users" ON public.feedback FOR SELECT TO authenticated USING (true);
+
+---
+
+### 2. Clone the Repository
 
 ```bash
 git clone https://github.com/your-username/fynxai.git
@@ -128,7 +268,7 @@ cd fynxai
 
 ---
 
-### 2. Backend Setup
+### 3. Backend Setup
 
 ```bash
 cd backend
@@ -155,7 +295,7 @@ http://localhost:8000
 
 ---
 
-### 3. Frontend Setup
+### 4. Frontend Setup
 
 ```bash
 cd frontend
@@ -178,7 +318,7 @@ http://localhost:5173
 
 ---
 
-### 4. Environment Configuration
+### 5. Environment Configuration
 
 Backend `.env`:
 
