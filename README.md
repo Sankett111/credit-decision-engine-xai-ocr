@@ -257,6 +257,7 @@ CREATE POLICY "Enable update access for authenticated users" ON public.support F
 CREATE POLICY "Enable insert for authenticated users" ON public.feedback FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Enable read access for authenticated users" ON public.feedback FOR SELECT TO authenticated USING (true);
 ```
+
 </details>
 
 ---
@@ -264,8 +265,8 @@ CREATE POLICY "Enable read access for authenticated users" ON public.feedback FO
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/Hrishit-Patil/credit-decision-engine-xai-ocr.git
-cd credit-decision-engine-xai-ocr.git
+git clone https://github.com/Hrishit-Patil/FynXai.git
+cd FynXai.git
 ```
 
 ---
